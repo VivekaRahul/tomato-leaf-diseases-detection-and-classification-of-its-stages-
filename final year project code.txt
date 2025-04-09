@@ -1,0 +1,204 @@
+training :import tensorflow as tf 
+from tensorflow.keras.applications import VGG16, InceptionV3 
+from tensorflow.keras.layers import Input, Dense, Dropout, Batch Normalization, Concatenate, 
+GlobalAveragePooling2D 
+from tensorflow.keras.models import Model 
+from tensorflow.keras.optimizers import AdamW, SGD 
+from tensorflow.keras.preprocessing.image import ImageDataGenerator 
+import numpy as np 
+import matplotlib.pyplot as plt 
+# Path to dataset 
+train_dir = r'C:\Users\nivet\OneDrive\Desktop\Leaf\Dataset\tra' 
+# Image Data Generator 
+datagen = ImageDataGenerator( 
+rescale=1.0 / 255, 
+validation_split=0.3, 
+rotation_range=20, 
+width_shift_range=0.2, 
+ 
+height_shift_range=0.2, 
+shear_range=0.2, 
+zoom_range=0.2, 
+horizontal_flip=True, 
+brightness_range=(0.8, 1.2) 
+) 
+# Function to zip datasets correctly 
+def zip_datasets(ds1, ds2): 
+while True: 
+batch1 = next(ds1) 
+batch2 = next(ds2) 
+yield (batch1[0], batch2[0]), batch1[1]  # Ensure tuple return 
+# Create train & validation datasets 
+train_dataset_299 = datagen.flow_from_directory(train_dir, target_size=(299, 299), batch_size=32, 
+class_mode='categorical', subset='training') 
+val_dataset_299 = datagen.flow_from_directory(train_dir, target_size=(299, 299), batch_size=32, 
+class_mode='categorical', subset='validation') 
+train_dataset_224 = datagen.flow_from_directory(train_dir, target_size=(224, 224), batch_size=32, 
+class_mode='categorical', subset='training') 
+val_dataset_224 = datagen.flow_from_directory(train_dir, target_size=(224, 224), batch_size=32, 
+class_mode='categorical', subset='validation')# Define output signature for from_generator 
+
+output_signature = ( 
+(tf.TensorSpec(shape=(None, 299, 299, 3), dtype=tf.float32), 
+tf.TensorSpec(shape=(None, 224, 224, 3), dtype=tf.float32)), 
+tf.TensorSpec(shape=(None, train_dataset_299.num_classes), dtype=tf.float32) 
+) 
+# Convert to tf.data.Dataset 
+train_generator = tf.data.Dataset.from_generator( 
+lambda: zip_datasets(train_dataset_299, train_dataset_224), 
+output_signature=output_signature 
+) 
+val_generator = tf.data.Dataset.from_generator( 
+lambda: zip_datasets(val_dataset_299, val_dataset_224), 
+output_signature=output_signature 
+) 
+# Model Inputs 
+input_tensor1 = Input(shape=(299, 299, 3)) 
+input_tensor2 = Input(shape=(224, 224, 3)) 
+# Load Pretrained Models Without Top Layers 
+inception_base = InceptionV3(weights='imagenet', include_top=False, input_tensor=input_tensor1) 
+
+vgg16_base = VGG16(weights='imagenet', include_top=False, input_tensor=input_tensor2) 
+# Freeze All Layers Initially 
+for layer in inception_base.layers: 
+layer.trainable = False 
+for layer in vgg16_base.layers: 
+layer.trainable = False 
+# Feature Extraction 
+inception_out = GlobalAveragePooling2D()(inception_base.output) 
+vgg16_out = GlobalAveragePooling2D()(vgg16_base.output) 
+# Merge Features 
+merged_output = Concatenate()([inception_out, vgg16_out]) 
+# Fully Connected Layers 
+x = Dense(512, activation='relu')(merged_output) 
+x = BatchNormalization()(x) 
+x = Dropout(0.3)(x) 
+x = Dense(256, activation='relu')(x) 
+x = BatchNormalization()(x) 
+x = Dropout(0.2)(x) 
+x = Dense(128, activation='relu')(x) 
+x = BatchNormalization()(x) 
+x = Dropout(0.2)(x) 
+x = Dense(64, activation='relu')(x) 
+x = BatchNormalization()(x) 
+x = Dropout(0.2)(x) 
+# Output Layer 
+num_classes = train_dataset_299.num_classes 
+output = Dense(num_classes, activation='softmax')(x) 
+# Define Model 
+model = Model(inputs=[input_tensor1, input_tensor2], outputs=output) 
+# Learning Rate Scheduler 
+lr_schedule = tf.keras.optimizers.schedules.CosineDecayRestarts( 
+initial_learning_rate=1e-3, 
+first_decay_steps=2000, 
+t_mul=2.0, 
+m_mul=0.9, 
+) 
+optimizer = AdamW(learning_rate=lr_schedule) 
+
+# Compile Model 
+loss = tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.15) 
+model.compile(optimizer=optimizer, loss=loss, metrics=['accuracy']) 
+# Train Model 
+history1 
+= 
+model.fit(train_generator, 
+validation_data=val_generator, 
+steps_per_epoch=len(train_dataset_299), validation_steps=len(val_dataset_299)) 
+# Unfreeze Last 50 Layers for Fine-Tuning 
+for layer in inception_base.layers[-50:]: 
+layer.trainable = True 
+for layer in vgg16_base.layers[-50:]: 
+layer.trainable = True 
+optimizer = SGD(learning_rate=1e-4, momentum=0.9) 
+model.compile(optimizer=optimizer, loss=loss, metrics=['accuracy']) 
+history2 
+= 
+model.fit(train_generator, 
+validation_data=val_generator, 
+steps_per_epoch=len(train_dataset_299), validation_steps=len(val_dataset_299)) 
+# Fully Unfreeze for Final Fine-Tuning 
+for layer in inception_base.layers: 
+layer.trainable = True 
+for layer in vgg16_base.layers: 
+layer.trainable = True 
+epochs=5, 
+epochs=10, 
+ 
+optimizer = SGD(learning_rate=1e-5, momentum=0.9) 
+model.compile(optimizer=optimizer, loss=loss, metrics=['accuracy']) 
+history3 
+= 
+model.fit(train_generator, 
+validation_data=val_generator, 
+steps_per_epoch=len(train_dataset_299), validation_steps=len(val_dataset_299)) 
+# Combine all accuracy values 
+epochs=10, 
+train_acc = history1.history['accuracy'] + history2.history['accuracy'] + history3.history['accuracy'] 
+val_acc 
+= 
+history1.history['val_accuracy'] 
+history3.history['val_accuracy']# Plot accuracy graph 
+plt.plot(train_acc, label='Train Accuracy') 
+plt.plot(val_acc, label='Validation Accuracy') 
+plt.xlabel('Epochs') 
+plt.ylabel('Accuracy') 
+plt.legend() 
+plt.title('Model Accuracy Over All Epochs') 
+plt.show() 
+# Save Model 
+model.save('hybrid_models.keras') 
+testing:import streamlit as st 
+import tensorflow as tf 
++ 
+history2.history['val_accuracy'] 
++ 
+
+import numpy as np 
+import os 
+import matplotlib.pyplot as plt 
+import matplotlib.image as mpimg 
+from tensorflow.keras.preprocessing import image 
+from sklearn.metrics import accuracy_score, f1_score, recall_score, confusion_matrix 
+# Load trained hybrid model 
+model = tf.keras.models.load_model("hybrid_models.keras") 
+# Define class labels 
+class_labels = ["healthy", "lateblight", "leafmold", "resistanthealthy", "resistantlateblight", 
+"resistantleafmold", "resistantseptoria", "septoria"] 
+st.title("Tomato Leaf Disease Classification 🍅🌿") 
+st.write("Upload a leaf image to classify its condition.") 
+uploaded_file = st.file_uploader("Upload Image", type=["jpg", "png", "jpeg"]) 
+if uploaded_file is not None: 
+# Save the uploaded file 
+img_path = "temp_image.jpg" 
+with open(img_path, "wb") as f: 
+f.write(uploaded_file.read()) 
+
+# Load and preprocess images for both input sizes 
+img_299 = image.load_img(img_path, target_size=(299, 299)) 
+img_224 = image.load_img(img_path, target_size=(224, 224)) 
+img_299_array = image.img_to_array(img_299) 
+img_224_array = image.img_to_array(img_224) 
+img_299_array = np.expand_dims(img_299_array, axis=0) / 255.0  # Normalize 
+img_224_array = np.expand_dims(img_224_array, axis=0) / 255.0  # Normalize 
+# Predict using both input tensors 
+predictions = model.predict([img_299_array, img_224_array]) 
+# Get predicted class and probabilities 
+predicted_class_idx = np.argmax(predictions) 
+predicted_class = class_labels[predicted_class_idx] 
+confidence = round(np.max(predictions) * 100, 2) 
+# Display uploaded image 
+st.image(uploaded_file, caption="Uploaded Image", use_column_width=True) 
+# Show predicted class label 
+st.markdown(f"### Prediction: *{predicted_class} ({confidence}%)*") 
+# Display the output image with title 
+img_display = mpimg.imread(img_path) 
+33 
+plt.imshow(img_display) 
+plt.axis("off") 
+plt.title(f"{predicted_class} ({confidence}%)") 
+plt.savefig("output.png")  # Save image with title 
+st.image("output.png", caption="Prediction Output", use_column_width=True) 
+# Remove temporary files 
+os.remove(img_path) 
+os.remove("output.png”)
