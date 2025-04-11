@@ -1,0 +1,262 @@
+Dataset creation: 
+          import cv2 
+import numpy as np 
+import random 
+import os 
+# Paths to training dataset (corrected path formatting) 
+train_path = r"dataset/traindata" 
+healthy_train_path = os.path.join(train_path, "healthy") 
+infected_train_paths = [os.path.join(train_path, "leafmold"), os.path.join(train_path,"lateblight"), 
+os.path.join(train_path, "septoria")] 
+resistant_train_path = os.path.join(train_path, "resistant") 
+         
+ # Ensure paths exist 
+os.makedirs(resistant_train_path, exist_ok=True) 
+def blend_images(healthy_img, infected_img, alpha): 
+             """ Blend infected patches onto the healthy leaf """ 
+              infected_resized = cv2.resize(infected_img, (healthy_img.shape[1]) 
+                  mask = infected_resized[:, :, 0] < 200  # Extract diseased regions 
+              blended = healthy_img.copy() 
+                  return blended 
+          def generate_resistant_images(): 
+             healthy_files = os.listdir(healthy_train_path) 
+ 
+ 
+               infected_files = {path: os.listdir(path) for path in infected_train_paths} 
+ 
+                  for i, h_file in enumerate(healthy_files): 
+                  healthy_img = cv2.imread(os.path.join(healthy_train_path, h_file)) 
+                                 if healthy_img is None: 
+                                     continue 
+                                 infected_category = random.choice(infected_train_paths) 
+                                      infected_file = random.choice(infected_files[infected_category]) 
+                                      infected_img = cv2.imread(os.path.join(infected_category, infected_file)) 
+                                  if infected_img is None: 
+                                       continue 
+ 
+                                   alpha = random.uniform(0.05, 0.25)  # Disease intensity (5-25%) 
+                                   resistant_img = blend_images(healthy_img, infected_img, alpha) 
+ 
+                                   output_file = os.path.join(resistant_train_path, f"resistant_{i}.jpg") 
+                                   cv2.imwrite(output_file, resistant_img) 
+# Generate resistant images for training data only 
+generate_resistant_images() 
+print("Resistant dataset generated for training data.") 
+Training: 
+   import tensorflow as tf 
+   from tensorflow.keras.applications import VGG16, InceptionV3 
+   from tensorflow.keras.layers import Input, Dense, Dropout, BatchNormalization 
+   from tensorflow.keras.models import Model 
+ 
+ 
+
+   from tensorflow.keras.optimizers import AdamW 
+   from tensorflow.keras.preprocessing.image import ImageDataGenerator 
+   import numpy as np 
+   import os 
+   import matplotlib.pyplot as plt 
+ 
+    # Define paths 
+    data_dir = r'C:\Users\nivet\OneDrive\Desktop\anew\dataset\traindata' 
+ 
+ def filter_images(directory): 
+    filtered_classes = {'healthy': [], 'resistant': [], 'leafmold': [], 'lateblight': [], 'septoria': []} 
+            for category in os.listdir(directory): 
+              category_path = os.path.join(directory, category) 
+         if os.path.isdir(category_path): 
+            for img in os.listdir(category_path): 
+                 disease_coverage = extract_disease_coverage(img) 
+                    if disease_coverage >= 90: 
+    filtered_classes['healthy'].append(os.path.join(category_path, img)) 
+                               elif 70 < disease_coverage < 90: 
+                    filtered_classes['resistant'].append(os.path.join(category_path, img)) 
+                               elif disease_coverage >= 30: 
+                                   if 'leafmold' in category.lower(): 
+                           filtered_classes['leafmold'].append(os.path.join(category_path, img)) 
+                                    
+                                elif 'lateblight' in category.lower(): 
+                                   filtered_classes['lateblight'].append(os.path.join(category_path, img)) 
+ 
+ 
+
+                               elif 'septoria' in category.lower():   
+                                   filtered_classes['septoria'].append(os.path.join(category_path, img)) 
+                                       return filtered_classes 
+ 
+# Dummy Function to Extract Disease Coverage (Replace with actual logic) 
+def extract_disease_coverage(image_name): 
+           return np.random.randint(0, 100)  # Replace with actual method 
+ 
+           filtered_data = filter_images(data_dir) 
+ 
+# Image Data Generator with Enhanced Augmentation 
+         datagen = ImageDataGenerator(rescale=1.0 / 255, validation_split=0.3) 
+ 
+train_dataset = datagen.flow_from_directory(data_dir, target_size=(224, 224), batch_size=32, 
+class_mode='categorical', subset='training') 
+val_dataset = datagen.flow_from_directory(data_dir, target_size=(224, 224), batch_size=32, 
+ 
+# Model Input 
+input_tensor = Input(shape=(224, 224, 3)) 
+ 
+# Load Pretrained Models Without Top Layers 
+vgg16_base = VGG16(weights='imagenet', include_top=False, input_tensor=input_tensor) 
+inception_base = InceptionV3(weights='imagenet', include_top=False, input_tensor=input_tensor) 
+ 
+# Freeze Initial Layers, Unfreeze Deeper Layers for Fine-Tuning 
+for layer in vgg16_base.layers[:100]: 
+layer.trainable = False 
+for layer in inception_base.layers[:100]: 
+layer.trainable = False 
+# Feature Extraction 
+vgg16_out = GlobalAveragePooling2D()(vgg16_base.output) 
+inception_out = GlobalAveragePooling2D()(inception_base.output) 
+merged_output = Concatenate()([vgg16_out, inception_out]) 
+# Fully Connected Layers 
+x = Dense(512, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.001))(merged_output) 
+x = BatchNormalization()(x) 
+x = Dropout(0.5)(x) 
+x = Dense(256, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.001))(x) 
+x = BatchNormalization()(x) 
+x = Dropout(0.4)(x) 
+x = Dense(128, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.001))(x) 
+x = BatchNormalization()(x) 
+x = Dropout(0.4)(x) 
+x = Dense(64, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.001))(x) 
+x = BatchNormalization()(x) 
+x = Dropout(0.4)(x) 
+# Output Layer 
+num_classes = train_dataset.num_classes 
+
+output = Dense(num_classes, activation='softmax')(x) 
+# Define Model 
+model = Model(inputs=input_tensor, outputs=output) 
+# Compile Model with Reduced Learning Rate for Fine-Tuning 
+optimizer = AdamW(learning_rate=3e-4) 
+loss = tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.2) 
+model.compile(optimizer=optimizer, loss=loss, metrics=['accuracy']) 
+# Train Model 
+history = model.fit(train_dataset, validation_data=val_dataset, epochs=30) 
+# Save Model 
+model.save('hybrid_model_filtered.keras') 
+# Plot Accuracy Graph 
+plt.plot(history.history['accuracy'], label='Train Accuracy') 
+plt.plot(history.history['val_accuracy'], label='Validation Accuracy') 
+plt.xlabel('Epochs') 
+plt.ylabel('Accuracy') 
+plt.legend() 
+plt.title('Training & Validation Accuracy') 
+plt.show() 
+
+Testing:   
+import streamlit as st 
+import tensorflow as tf 
+import numpy as np 
+import os 
+import matplotlib.pyplot as plt 
+import matplotlib.image as mpimg 
+from tensorflow.keras.preprocessing import image 
+# Load trained hybrid model 
+model = tf.keras.models.load_model("hybrid_model_filtered.keras")  # Ensure it matches the saved 
+model name 
+# Define class labels 
+class_labels = ["healthy", "lateblight", "leafmold", "resistant", "septoria"] 
+st.title("Tomato Leaf Disease Classification ) 
+st.write("Upload a leaf image to classify its condition.") 
+uploaded_file = st.file_uploader("Upload Image", type=["jpg", "png", "jpeg"]) 
+if uploaded_file is not None: 
+# Save the uploaded file temporarily 
+ 
+     
+    img_path = "temp_image.jpg" 
+    with open(img_path, "wb") as f: 
+        f.write(uploaded_file.read()) 
+ 
+    # Load and preprocess image for model 
+    img = image.load_img(img_path, target_size=(224, 224)) 
+    img_array = image.img_to_array(img) 
+ 
+    img_array = np.expand_dims(img_array, axis=0) / 255.0  # Normalize 
+    # Predict using the trained model 
+    predictions = model.predict(img_array) 
+ 
+    # Get predicted class 
+    predicted_class_idx = np.argmax(predictions) 
+    predicted_class = class_labels[predicted_class_idx] 
+ 
+    # Display uploaded image 
+    st.image(uploaded_file, caption="Uploaded Image", use_column_width=True) 
+ 
+    # Show predicted class label (without percentage) 
+    st.markdown(f"### Prediction: **{predicted_class}**") 
+ 
+    # Display the output image with title (without percentage) 
+    img_display = mpimg.imread(img_path) 
+    plt.imshow(img_display) 
+ 
+  
+    
+    plt.axis("off") 
+    plt.title(f"{predicted_class}") 
+    plt.savefig("output.png")  # Save image with title 
+ 
+    st.image("output.png", caption="Prediction Output", use_column_width=True) 
+ 
+ 
+    # Remove temporary files 
+    os.remove(img_path) 
+    os.remove("output.png") 
+        Accuracy: 
+         import numpy as np 
+import tensorflow as tf 
+import matplotlib.pyplot as plt 
+import seaborn as sns 
+from sklearn.metrics import confusion_matrix, classification_report 
+ 
+# Load trained model 
+model = tf.keras.models.load_model("hybrid_model_filtered.keras") 
+ 
+# Load test dataset 
+test_data_path = r'C:\Users\nivet\OneDrive\Desktop\anew\dataset\testdata'  # Update path 
+test_datagen = tf.keras.preprocessing.image.ImageDataGenerator(rescale=1.0/255) 
+test_generator = test_datagen.flow_from_directory( 
+test_data_path, 
+target_size=(224, 224), 
+batch_size=32, 
+class_mode="categorical", 
+shuffle=False 
+) 
+# Evaluate model 
+test_loss, test_acc = model.evaluate(test_generator) 
+print(f"Test Accuracy: {test_acc * 100:.2f}%") 
+# Load training history 
+history_dict = np.load("training_history.npy", allow_pickle=True).item() 
+# Accuracy Graph 
+plt.figure(figsize=(8, 5)) 
+plt.plot(history_dict['accuracy'], label="Training Accuracy", color="blue") 
+plt.plot(history_dict['val_accuracy'], label="Validation Accuracy", color="red") 
+plt.xlabel("Epochs") 
+plt.ylabel("Accuracy") 
+plt.title("Training & Validation Accuracy") 
+plt.legend() 
+plt.grid() 
+plt.show() 
+  
+ 
+y_pred_probs = model.predict(test_generator) 
+y_pred = np.argmax(y_pred_probs, axis=1) 
+y_true = test_generator.classes 
+class_labels = list(test_generator.class_indices.keys()) 
+ 
+cm = confusion_matrix(y_true, y_pred) 
+plt.figure(figsize=(6, 6)) 
+sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=class_labels, 
+yticklabels=class_labels) 
+plt.xlabel("Predicted Label") 
+plt.ylabel("True Label") 
+plt.title("Confusion Matrix") 
+plt.show() 
+ 
+# Classification Report 
+print("Classification Report:") 
+print(classification_report(y_true, y_pred, target_names=class_labels))
